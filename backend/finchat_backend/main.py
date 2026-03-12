@@ -38,21 +38,11 @@ app.add_middleware(
 # Include API routers
 app.include_router(api_v1_router, prefix="/api/v1")
 
-# Health check endpoint (must be before SPA catch-all)
+# Health check endpoint
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "ok", "service": "finchat-backend"}
-
-# Serve React static files in production
-FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
-if FRONTEND_DIST.exists():
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIST)), name="static")
-
-    @app.get("/{full_path:path}")
-    async def serve_spa():
-        """Serve the React SPA for all non-API routes."""
-        return FileResponse(str(FRONTEND_DIST / "index.html"))
 
 if __name__ == "__main__":
     uvicorn.run("finchat_backend.main:app", host="0.0.0.0", port=8000, reload=True)

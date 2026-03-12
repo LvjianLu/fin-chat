@@ -25,10 +25,20 @@ dist/
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
 
 # Project specific
 data/*
 issues.md
+backend.log
+*.log
+
+# Node.js / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite
+frontend/.eslintcache
 
 # OS
 .DS_Store

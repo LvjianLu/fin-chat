@@ -1,11 +1,30 @@
 # FinChat - Financial Statement Chatbot
 
-A full-stack application for analyzing financial statements with AI. The current runtime is a **hybrid deployment**:
+A full-stack application for analyzing financial statements with AI. The application has two alternative frontends:
 
-- the **Streamlit app** handles the interactive UI and the live `FinChat` agent runtime
-- the **FastAPI backend** manages session APIs, persistence, and document/session service orchestration
+- **React frontend** (recommended): Modern React + TypeScript + Vite UI with three-column layout
+- **Streamlit app** (legacy): Quick prototyping UI with live `FinChat` agent runtime
+
+Both frontends communicate with the **FastAPI backend** that manages session APIs, persistence, and document/session service orchestration.
 
 ## Architecture
+
+### Option 1: React Frontend (Recommended)
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│   React App     │────▶│   FastAPI       │
+│   (port 5173)   │◀────│   (port 8000)   │
+└─────────────────┘     └─────────────────┘
+         │                        │
+         ▼                        ▼
+┌─────────────────┐     ┌─────────────────┐
+│   OpenRouter    │     │   Persistence   │
+│   AI API        │     │   (JSON files)  │
+└─────────────────┘     └─────────────────┘
+```
+
+### Option 2: Streamlit Frontend (Legacy)
 
 ```
 ┌─────────────────┐     ┌─────────────────┐
@@ -21,7 +40,10 @@ A full-stack application for analyzing financial statements with AI. The current
 └─────────────────┘     └─────────────────┘
 ```
 
-- **Streamlit app**: `localhost:8501`
+### Ports & Services
+
+- **React frontend**: `localhost:5173` (dev) or static files served separately
+- **Streamlit app**: `localhost:8501` (legacy)
 - **Backend API**: `localhost:8000`
 - **LLM**: OpenRouter API (OpenAI-compatible)
 - **Storage**: JSON files in `data/sessions/` for persisted chat sessions
@@ -107,7 +129,31 @@ The API will be available at:
 - **API docs**: http://localhost:8000/api/docs
 - **Health check**: http://localhost:8000/api/health
 
-### 4. Start the Streamlit App
+### 4. Choose Your Frontend
+
+#### Option A: React Frontend (Modern UI)
+
+In a **new terminal**:
+
+```bash
+# Navigate to frontend directory
+cd frontend
+
+# Install dependencies (use Tsinghua mirror for faster downloads)
+npm install --registry=https://registry.npmmirror.com
+
+# Create environment file
+cp .env.example .env
+# Default configuration points to http://localhost:8000
+
+# Start development server
+npm run dev
+# Frontend will be available at http://localhost:5173
+```
+
+The React dev server includes a proxy that forwards `/api` requests to the backend automatically.
+
+#### Option B: Streamlit App (Legacy)
 
 In a **new terminal** (keeping the backend running):
 
@@ -305,62 +351,279 @@ pytest tests/backend/ -v
 ### Local Development
 - Follow "Quick Start" above
 
-### Production (Single Server)
+### Production (Decoupled Architecture)
 
-Run both processes separately and give them the same environment variables:
+In production, the React frontend and backend can be deployed independently:
 
-1. **Backend API**
-   ```bash
-   uvicorn finchat_backend.main:app --app-dir backend --host 0.0.0.0 --port 8000
-   ```
-2. **Streamlit app**
-   ```bash
-   streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
-   ```
-3. **Reverse proxy**
-   ```text
-   https://yourdomain.com/      -> http://127.0.0.1:8501
-   https://yourdomain.com/api/  -> http://127.0.0.1:8000/api/
-   ```
-4. **Process supervision**
-   Use `systemd`, `supervisord`, Docker, or another process manager to keep both services alive.
-
-Recommended production environment variables:
+#### 1. Build and Deploy Frontend
 
 ```bash
+cd frontend
+
+# Install dependencies
+npm install --registry=https://registry.npmmirror.com
+
+# Create production build
+npm run build
+
+# Output: frontend/dist/ with optimized static files
+```
+
+Deploy the `frontend/dist/` directory to any static hosting service:
+- **Nginx**: Copy files to `/var/www/finchat/`
+- **CDN**: Upload to Cloudflare Pages, Vercel, Netlify, etc.
+- **Docker**: Use nginx container (see example below)
+
+Configure the frontend to point to your backend by setting `VITE_API_BASE_URL` during build:
+
+```bash
+VITE_API_BASE_URL=https://api.yourdomain.com npm run build
+```
+
+#### 2. Deploy Backend API
+
+```bash
+# Navigate to project root
+cd /path/to/finchat
+
+# Activate conda/virtualenv
+conda activate finchat  # or source venv/bin/activate
+
+# Set environment variables
+export OPENROUTER_API_KEY="your-api-key-here"
+export DATA_DIR="/var/lib/finchat/data"
+export LOG_LEVEL="INFO"
+
+# Set PYTHONPATH if needed
+export PYTHONPATH="./backend:$PYTHONPATH"
+
+# Start backend (use process manager in production)
+python -m finchat_backend.main --host 0.0.0.0 --port 8000
+```
+
+#### 3. Configure Reverse Proxy (Nginx Example)
+
+```nginx
+server {
+    listen 80;
+    server_name yourdomain.com;
+
+    # Frontend (React static files)
+    location / {
+        root /var/www/finchat;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Backend API proxy
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Backend static files (if any)
+    location /static/ {
+        proxy_pass http://127.0.0.1:8000/static/;
+    }
+}
+```
+
+#### 4. Process Supervision (Systemd)
+
+Create `/etc/systemd/system/finchat-backend.service`:
+
+```ini
+[Unit]
+Description=FinChat Backend API
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/path/to/finchat
+Environment="OPENROUTER_API_KEY=sk-or-..."
+Environment="DATA_DIR=/var/lib/finchat/data"
+Environment="PYTHONPATH=./backend"
+ExecStart=/path/to/conda/envs/finchat/bin/python -m finchat_backend.main --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable finchat-backend
+sudo systemctl start finchat-backend
+sudo systemctl status finchat-backend
+```
+
+#### Recommended Production Environment Variables
+
+```bash
+# Required
 OPENROUTER_API_KEY=sk-or-...
+
+# Optional (defaults shown)
 OPENROUTER_MODEL=stepfun/step-3.5-flash:free
-API_BASE_URL=https://yourdomain.com
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 DATA_DIR=/var/lib/finchat/data
 LOG_LEVEL=INFO
+MAX_DOCUMENT_SIZE=100000
 ```
 
 ### Docker Deployment
 
-Use two containers or one compose stack: one for the backend and one for Streamlit.
+Use Docker Compose to run both services together, or deploy them separately.
 
-```dockerfile
-# Backend
-FROM python:3.10-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY backend ./backend
-COPY src ./src
-COPY data ./data
-CMD ["uvicorn", "finchat_backend.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]
+#### Using Docker Compose (Recommended)
+
+Create `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - DATA_DIR=/app/data
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
 ```
 
+Create `backend/Dockerfile`:
+
 ```dockerfile
-# Streamlit
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source
+COPY backend ./backend
+COPY src ./src
+
+# Create data directory
+RUN mkdir -p /app/data
+
+ENV PYTHONPATH=/app
+ENV DATA_DIR=/app/data
+
+EXPOSE 8000
+
+CMD ["python", "-m", "finchat_backend.main", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Create `frontend/Dockerfile`:
+
+```dockerfile
+# Build stage
+FROM node:18-alpine as build
+WORKDIR /app
+COPY frontend/package*.json ./
+RUN npm install --registry=https://registry.npmmirror.com
+COPY frontend/ .
+ARG VITE_API_BASE_URL=http://localhost:8000
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+RUN npm run build
+
+# Production stage
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+Create `frontend/nginx.conf`:
+
+```nginx
+server {
+    listen 80;
+    server_name localhost;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://backend:8000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+Run:
+
+```bash
+# Set your API key
+export OPENROUTER_API_KEY="sk-or-..."
+
+# Build and start
+docker-compose up -d
+
+# Access
+# Frontend: http://localhost:5173
+# Backend: http://localhost:8000
+```
+
+#### Standalone Backend Container
+
+If you want to run only the backend:
+
+```dockerfile
+# backend/Dockerfile
 FROM python:3.10-slim
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY app.py ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY backend ./backend
 COPY src ./src
-COPY data ./data
-CMD ["streamlit", "run", "app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+RUN mkdir -p /app/data
+ENV PYTHONPATH=/app
+ENV DATA_DIR=/app/data
+EXPOSE 8000
+CMD ["python", "-m", "finchat_backend.main", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Build and run:
+
+```bash
+docker build -t finchat-backend -f backend/Dockerfile .
+docker run -p 8000:8000 -e OPENROUTER_API_KEY=your-key -v $(pwd)/data:/app/data finchat-backend
 ```
 
 ### Cloud Platforms
