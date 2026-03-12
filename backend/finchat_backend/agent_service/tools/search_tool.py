@@ -1,10 +1,12 @@
 """Document search tool for finding terms in loaded documents."""
 
+import json
 import logging
+from typing import Any, Dict
 
 from .base import Tool, ToolResult
-from ...core.analyzer import FinDataExtractor
-from ...models import SearchResult
+from agent_service.core.analyzer import FinDataExtractor
+from agent_service.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,19 @@ class SearchTool(Tool):
     def description(self) -> str:
         """Return tool description for LLM."""
         return "Search for specific terms or numbers in the loaded financial document. Use this to find occurrences of keywords, figures, or metrics."
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        """Return JSON Schema for search tool parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query - the term or phrase to find in the document"
+                }
+            },
+            "required": ["query"]
+        }
 
     def execute(self, query: str) -> ToolResult:
         """Execute document search.

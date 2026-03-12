@@ -93,6 +93,8 @@ class OpenRouterClient:
         messages: list[dict[str, str]],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        tools: Optional[list[dict]] = None,
+        tool_choice: Optional[str] = "auto",
     ) -> str:
         """Send chat completion request.
 
@@ -100,9 +102,12 @@ class OpenRouterClient:
             messages: List of message dictionaries
             temperature: Sampling temperature (0-2)
             max_tokens: Maximum tokens in response
+            tools: Optional list of tool schemas for function calling
+            tool_choice: Control when tools are used ("auto", "none", or {"type": "function", "function": {"name": "tool_name"}})
 
         Returns:
-            Assistant's response text
+            Assistant's response text. If tools are provided and the model wants to call a tool,
+            returns a special format with tool calls. The caller should check for this.
 
         Raises:
             APIError: If API call fails
@@ -118,19 +123,41 @@ class OpenRouterClient:
                     "message_count": len(messages),
                     "temperature": temp,
                     "max_tokens": tokens,
+                    "tools_count": len(tools) if tools else 0,
                 },
             )
 
-            response: ChatCompletion = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temp,
-                max_tokens=tokens,
-            )
+            # Build API call parameters
+            api_params = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temp,
+                "max_tokens": tokens,
+            }
+            if tools:
+                api_params["tools"] = tools
+            if tool_choice is not None:
+                api_params["tool_choice"] = tool_choice
 
-            assistant_message = response.choices[0].message.content
-            if not assistant_message:
-                raise APIError("Empty response from API")
+            response: ChatCompletion = self.client.chat.completions.create(**api_params)
+
+            assistant_message = response.choices[0].message
+            content = assistant_message.content or ""
+
+            # Check if there are tool calls
+            if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls:
+                # Return a special format that includes tool calls
+                result = {"content": content, "tool_calls": []}
+                for tool_call in assistant_message.tool_calls:
+                    result["tool_calls"].append({
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments
+                        }
+                    })
+                return result
 
             usage = getattr(response, "usage", None)
             if usage:
@@ -143,7 +170,7 @@ class OpenRouterClient:
                     },
                 )
 
-            return assistant_message
+            return content
 
         except Exception as e:
             logger.error("OpenRouter API call failed", exc_info=True)

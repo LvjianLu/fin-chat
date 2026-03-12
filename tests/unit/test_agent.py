@@ -3,25 +3,24 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-from finchat.agent.llm.openrouter import OpenRouterLLM
-from finchat.agent.memory import ConversationMemory
-from finchat.agent.tools import (
+from agent_service.agent.llm.openrouter import OpenRouterLLM
+from agent_service.agent.memory import ConversationMemory
+from agent_service.tools import (
     SearchTool,
     FinAnalysisTool,
-    SECDownloadTool,
+    ToolResult,
 )
-from finchat.agent import FinChat
-from finchat.config import Settings, load_settings_from_dict
-from finchat.models import (
+from agent_service.agent import FinChat
+from agent_service.config import Settings, load_settings_from_dict
+from agent_service.models import (
     SearchResult,
 )
-from finchat.agent.tools.tool_result import ToolResult
 
 
 class TestOpenRouterLLM:
     """Test OpenRouterLLM provider."""
 
-    @patch("finchat.agent.llm.openrouter.OpenRouterClient")
+    @patch("agent_service.agent.llm.openrouter.OpenRouterClient")
     def test_init_with_valid_settings(self, mock_client_class, test_settings):
         """Test LLM initialization with valid settings."""
         mock_client = Mock()
@@ -32,7 +31,7 @@ class TestOpenRouterLLM:
         assert llm.is_available() is True
         mock_client_class.assert_called_once()
 
-    @patch("finchat.agent.llm.openrouter.OpenRouterClient")
+    @patch("agent_service.agent.llm.openrouter.OpenRouterClient")
     def test_chat_delegates_to_client(self, mock_client_class, test_settings):
         """Test chat method calls client.chat."""
         mock_client = Mock()
@@ -138,7 +137,7 @@ class TestFinancialAnalysisTool:
 
     def test_execute_requires_document_context(self, test_settings):
         """Test that analysis fails without document context."""
-        with patch("finchat.agent.llm.openrouter.OpenAI"):
+        with patch("agent_service.agent.llm.openrouter.OpenAI"):
             llm = OpenRouterLLM(test_settings)
             tool = FinAnalysisTool(llm)
             result = tool.execute()
@@ -147,7 +146,7 @@ class TestFinancialAnalysisTool:
 
     def test_execute_calls_llm_with_document(self, test_settings):
         """Test that analysis calls LLM with document context."""
-        with patch("finchat.agent.llm.openrouter.OpenAI") as mock_openai:
+        with patch("agent_service.agent.llm.openrouter.OpenAI") as mock_openai:
             llm = OpenRouterLLM(test_settings)
             mock_llm_chat = Mock(return_value="Analysis report")
             llm.chat = mock_llm_chat
@@ -161,62 +160,6 @@ class TestFinancialAnalysisTool:
             # Check that LLM was called with expected messages structure
             args = mock_llm_chat.call_args[0][0]
             assert any("Document Context:" in msg["content"] for msg in args)
-
-
-class TestSECDownloadTool:
-    """Test SECDownloadTool."""
-
-    def test_execute_validates_ticker(self):
-        """Test input validation for ticker."""
-        tool = SECDownloadTool(data_dir="./test_data")
-        result = tool.execute(ticker="", filing_type="10-K")
-        assert result.success is False
-        assert "ticker" in result.error.lower() or "Invalid" in result.error
-
-    def test_execute_validates_filing_type(self):
-        """Test input validation for filing_type."""
-        tool = SECDownloadTool(data_dir="./test_data")
-        result = tool.execute(ticker="AAPL", filing_type="INVALID")
-        assert result.success is False
-        assert "filing type" in result.error.lower()
-
-    def test_execute_validates_count(self):
-        """Test input validation for count."""
-        tool = SECDownloadTool(data_dir="./test_data")
-        result = tool.execute(ticker="AAPL", count=10)
-        assert result.success is False
-        assert "count" in result.error.lower()
-
-    @patch("finchat.agent.tools.sec_download_tool.SECFilingDownloader")
-    def test_execute_success(self, mock_downloader_class, test_settings):
-        """Test successful download execution."""
-        # Mock the downloader
-        mock_downloader = Mock()
-        mock_downloader.download_filing.return_value = "/path/to/file.txt"
-        mock_downloader.read_filing.return_value = "Filing content"
-        mock_downloader.extract_financial_sections.return_value = {"risk_factors": "..."}
-        mock_downloader_class.return_value = mock_downloader
-
-        tool = SECDownloadTool(data_dir=test_settings.data_dir)
-        result = tool.execute(ticker="AAPL", filing_type="10-K", count=1)
-
-        assert result.success is True
-        assert result.data["ticker"] == "AAPL"
-        assert result.data["filing_type"] == "10-K"
-        assert result.data["content"] == "Filing content"
-        assert result.data["character_count"] == len("Filing content")
-
-    @patch("finchat.agent.tools.sec_download_tool.SECFilingDownloader")
-    def test_execute_no_file_found(self, mock_downloader_class):
-        """Test handling when no filing found."""
-        mock_downloader = Mock()
-        mock_downloader.download_filing.return_value = None
-        mock_downloader_class.return_value = mock_downloader
-
-        tool = SECDownloadTool(data_dir="./data")
-        result = tool.execute(ticker="INVALID", filing_type="10-K")
-        assert result.success is False
-        assert "No 10-K found" in result.error
 
 
 class TestFinChat:

@@ -2,8 +2,8 @@
 
 import pytest
 
-from finchat.config import Settings, load_settings_from_dict
-from finchat.models import ConfigurationError
+from agent_service.config import Settings, load_settings_from_dict
+from agent_service.models import ConfigurationError
 
 
 class TestSettings:

@@ -1,17 +1,19 @@
 """Agent base class and FinChat implementation."""
 
 import logging
+import re
 from abc import ABC, abstractmethod
-from typing import Any, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from .llm import LLMProvider
 from .memory import ConversationMemory
 from ..core.analyzer import FinDataExtractor
-from ..models import ChatMessage, DocumentMetadata, SearchResult
+from ..models import DocumentMetadata, SearchResult
 from ..constants import CONVERSATION_HISTORY_MAX_EXCHANGES
 
 if TYPE_CHECKING:
-    from .tools.base import Tool
+    from ..tools.base import Tool
+    from ..tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -96,31 +98,57 @@ When analyzing:
 - Identify key risks from risk factors section
 - Summarize business overview if relevant
 
-Format responses with clear sections and bullet points when appropriate."""
+Format responses with clear sections and bullet points when appropriate.
+
+Tool usage:
+- You have access to tools such as:
+  - get_market_data: retrieve real-time and recent market data for a given stock symbol (e.g., BABA, AAPL), including current price and recent closing prices.
+  - get_financial_statements: retrieve structured financial statements (income statement, balance sheet, cash flow) for a given stock symbol.
+- When the user asks about stock prices, closing prices, market performance, or similar real-time market data, call the get_market_data tool with an appropriate symbol.
+- When the user asks for detailed financial statements or historical financial metrics, call the get_financial_statements tool.
+- After receiving tool results, always summarize and explain the data in clear natural language for the user."""
 
     def __init__(
         self,
         llm: LLMProvider,
         memory: ConversationMemory,
         tools: Optional[List["Tool"]] = None,
+        executor: Optional["ToolExecutor"] = None,
+        enable_tool_calling: bool = True,
     ) -> None:
         """Initialize the financial agent.
 
         Args:
             llm: LLM provider for generating responses
             memory: Conversation memory manager
-            tools: Optional list of tools the agent can use
+            tools: Optional list of tools the agent can use (legacy)
+            executor: Optional ToolExecutor for unified tool execution
+            enable_tool_calling: Whether to enable automatic tool calling
         """
         self.llm = llm
         self.memory = memory
         self.tools = {tool.name: tool for tool in (tools or [])}
+        self.executor = executor
+        self.enable_tool_calling = enable_tool_calling
         logger.info(
             "FinChat initialized",
-            extra={"tools": list(self.tools.keys()), "model": llm.model},
+            extra={
+                "tools": list(self.tools.keys()),
+                "model": llm.model,
+                "has_executor": executor is not None,
+                "enable_tool_calling": enable_tool_calling,
+            },
         )
 
     def run(self, user_input: str) -> str:
-        """Process user input and generate response.
+        """Process user input and generate response using ReAct pattern.
+
+        This method implements a reasoning-acting loop if tool calling is enabled:
+        1. Ask LLM with tools available (if enabled and tools exist)
+        2. If tool calls are requested, execute them and observe results
+        3. Feed observations back to LLM for final answer
+
+        If tool calling is disabled or fails, falls back to simple chat.
 
         Args:
             user_input: User's question or message
@@ -131,8 +159,180 @@ Format responses with clear sections and bullet points when appropriate."""
         Raises:
             Exception: If LLM call fails
         """
+        # Build initial messages
         messages = self._build_messages(user_input)
-        response = self.llm.chat(messages)
+
+        # Check if we should attempt tool calling
+        available_tools = list(self.tools.values())
+        if not (self.enable_tool_calling and available_tools):
+            # Tool calling disabled or no tools - simple chat
+            response = self.llm.chat(messages)
+            self.memory.add_message("user", user_input)
+            self.memory.add_message("assistant", response)
+            return response
+
+        # Prepare tool schemas for function calling
+        tool_schemas = [tool.to_openai_function() for tool in available_tools]
+
+        # Step 1: Initial LLM call with tools
+        try:
+            llm_response = self.llm.chat(messages, tools=tool_schemas, tool_choice="auto")
+        except Exception as e:
+            logger.warning(
+                "Tool call attempt failed, falling back to simple chat",
+                exc_info=True
+            )
+            # Fallback to simple chat on tool call failure (e.g., model doesn't support tools)
+            response = self.llm.chat(messages)
+            self.memory.add_message("user", user_input)
+            self.memory.add_message("assistant", response)
+            return response
+
+        # Check if response contains OpenAI-style function tool calls
+        if isinstance(llm_response, dict) and "tool_calls" in llm_response:
+            # We have tool calls to execute
+            content = llm_response.get("content", "")
+            tool_calls = llm_response["tool_calls"]
+
+            # Add assistant message with tool calls to conversation
+            assistant_msg = {"role": "assistant", "content": content}
+            if tool_calls:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"]
+                        }
+                    } for tc in tool_calls
+                ]
+            messages.append(assistant_msg)
+
+            # Execute each tool call
+            for tool_call in tool_calls:
+                tool_name = tool_call["function"]["name"]
+                tool_args_str = tool_call["function"]["arguments"]
+
+                logger.info(
+                    "Executing tool",
+                    extra={"tool": tool_name, "arguments": tool_args_str}
+                )
+
+                try:
+                    # Parse arguments
+                    import json
+
+                    tool_args = json.loads(tool_args_str)
+                    result_content = self._execute_tool(tool_name, tool_args)
+
+                    # Add tool response message
+                    messages.append({
+                        "role": "tool",
+                        "content": result_content,
+                        "tool_call_id": tool_call["id"],
+                        "name": tool_name
+                    })
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse tool arguments: {e}", exc_info=True)
+                    messages.append({
+                        "role": "tool",
+                        "content": f"Error: Invalid arguments for tool {tool_name}",
+                        "tool_call_id": tool_call["id"],
+                        "name": tool_name
+                    })
+                except Exception as e:
+                    logger.error(f"Tool execution failed: {e}", exc_info=True)
+                    messages.append({
+                        "role": "tool",
+                        "content": f"Error: Tool execution failed: {e}",
+                        "tool_call_id": tool_call["id"],
+                        "name": tool_name
+                    })
+
+            # Step 2: Second LLM call with tool results to get final answer
+            try:
+                final_response = self.llm.chat(messages)
+            except Exception as e:
+                logger.error("Final LLM call failed", exc_info=True)
+                raise
+
+            # Save to memory
+            self.memory.add_message("user", user_input)
+            self.memory.add_message("assistant", final_response)
+
+            return final_response
+
+        # Check for XML-style <tool_call> markup in plain-text responses
+        if isinstance(llm_response, str) and "<tool_call>" in llm_response:
+            response_text = llm_response
+
+            # Parse function name
+            func_match = re.search(
+                r"<function\s*=\s*([a-zA-Z0-9_\-]+)\s*>", response_text
+            )
+            if not func_match:
+                # If parsing fails, treat as normal answer
+                self.memory.add_message("user", user_input)
+                self.memory.add_message("assistant", response_text)
+                return response_text
+
+            tool_name = func_match.group(1)
+
+            # Parse parameters: <parameter=key> value </parameter>
+            params: Dict[str, Any] = {}
+            for param_match in re.finditer(
+                r"<parameter\s*=\s*([a-zA-Z0-9_\-]+)\s*>(.*?)</parameter>",
+                response_text,
+                flags=re.DOTALL,
+            ):
+                key = param_match.group(1)
+                value = param_match.group(2).strip()
+                params[key] = value
+
+            logger.info(
+                "Parsed XML-style tool call",
+                extra={"tool": tool_name, "params": params},
+            )
+
+            # Add the assistant message that requested the tool
+            messages.append({"role": "assistant", "content": response_text})
+
+            # Execute tool via unified executor when available
+            try:
+                result_content = self._execute_tool(tool_name, params)
+                success = not str(result_content).startswith("Error:")
+            except Exception as e:
+                success = False
+                result_content = f"Tool execution failed: {e}"
+                logger.error(
+                    "XML-style tool execution raised exception",
+                    exc_info=True,
+                    extra={"tool": tool_name},
+                )
+
+            # Append tool result as additional assistant context for the final answer
+            tool_context = (
+                f"Tool '{tool_name}' was called with parameters {params}.\n"
+                f"Execution {'succeeded' if success else 'failed'} with result:\n{result_content}"
+            )
+            messages.append({"role": "assistant", "content": tool_context})
+
+            # Final LLM call combining original prompt and tool result
+            try:
+                final_response = self.llm.chat(messages)
+            except Exception:
+                logger.error("Final LLM call after XML-style tool execution failed", exc_info=True)
+                # Fallback to returning the tool context if LLM fails
+                final_response = str(tool_context)
+
+            self.memory.add_message("user", user_input)
+            self.memory.add_message("assistant", final_response)
+            return final_response
+
+        # No tool calls, just normal response
+        response = llm_response if isinstance(llm_response, str) else str(llm_response)
         self.memory.add_message("user", user_input)
         self.memory.add_message("assistant", response)
         return response
@@ -245,6 +445,17 @@ Format responses with clear sections and bullet points when appropriate."""
         Raises:
             DocumentError: If no document is loaded
         """
+        # Try using ToolExecutor first if available
+        if self.executor:
+            result = self.executor.execute("search_document", query=query)
+            if result.success:
+                return result.data
+            # If not found or fails, fall through to legacy method
+            if not result.success and "not found" not in result.error.lower():
+                from ..models import DocumentError
+                raise DocumentError(result.error or "Search failed via executor")
+
+        # Legacy: direct tool execution
         if "search_document" in self.tools:
             result = self.tools["search_document"].execute(query=query)
             if not result.success:
@@ -286,6 +497,20 @@ Format responses with clear sections and bullet points when appropriate."""
             from ..models import DocumentError
             raise DocumentError("No document loaded. Please load a financial statement first.")
 
+        # Try using ToolExecutor first if available
+        if self.executor:
+            result = self.executor.execute(
+                "analyze_financials",
+                document_context=self.memory.get_document_context()
+            )
+            if result.success:
+                return result.data
+            # If not found or fails, fall through to legacy method
+            if not result.success and "not found" not in result.error.lower():
+                from ..models import DocumentError
+                raise DocumentError(result.error or "Analysis failed via executor")
+
+        # Legacy: direct tool execution
         if "analyze_financials" in self.tools:
             result = self.tools["analyze_financials"].execute(
                 document_context=self.memory.get_document_context()
@@ -313,10 +538,6 @@ Format responses with clear sections and bullet points when appropriate."""
 6. Overall financial health assessment
 
 Format as bullet points with specific numbers where available."""
-            # Build messages with analysis_prompt as user message
-            # We can call run() but that would add to history? We want to add to history as user+assistant. But we could call run directly.
-            # However, run() adds user and assistant to memory. That's fine.
-            # But we might want to use a separate method that doesn't add to history? The old analyze_financials called chat internally, which added to history. So we'll do the same.
             return self.run(analysis_prompt)
 
     def _build_messages(self, user_message: str) -> List[dict[str, str]]:
@@ -348,3 +569,43 @@ Format as bullet points with specific numbers where available."""
         # Add current user message as user role
         messages.append({"role": "user", "content": user_message})
         return messages
+
+    def _execute_tool(self, tool_name: str, params: Dict[str, Any]) -> str:
+        """Execute a tool through the unified executor interface."""
+        if self.executor:
+            result = self.executor.execute(tool_name, **params)
+            if result.success:
+                result_content = str(result.data)
+                logger.info(
+                    "Tool execution via executor successful",
+                    extra={"tool": tool_name, "result_size": len(result_content)},
+                )
+                return result_content
+
+            logger.warning(
+                "Tool execution via executor failed",
+                extra={"tool": tool_name, "error": result.error},
+            )
+            return f"Error: {result.error}"
+
+        if tool_name in self.tools:
+            tool_result = self.tools[tool_name].execute(**params)
+            if tool_result.success:
+                result_content = str(tool_result.data)
+                logger.info(
+                    "Tool execution successful",
+                    extra={"tool": tool_name, "result_size": len(result_content)},
+                )
+                return result_content
+
+            logger.warning(
+                "Tool execution failed",
+                extra={"tool": tool_name, "error": tool_result.error},
+            )
+            return f"Error: {tool_result.error}"
+
+        logger.warning(
+            "Tool not available for execution",
+            extra={"tool": tool_name},
+        )
+        return f"Error: Tool '{tool_name}' not found"

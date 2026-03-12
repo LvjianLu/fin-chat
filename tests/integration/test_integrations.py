@@ -6,9 +6,10 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from finchat.agent.llm.openrouter import OpenRouterClient
-from finchat.integrations.sec_edgar import SECEdgarDownloader
-from finchat.config import Settings, load_settings_from_dict
+from agent_service.agent.llm.openrouter import OpenRouterClient
+# SECEdgarDownloader not available in current codebase, skip related tests
+# from agent_service.integrations.sec_edgar import SECEdgarDownloader
+from agent_service.config import Settings, load_settings_from_dict
 
 
 @pytest.mark.integration
@@ -81,7 +82,7 @@ class TestOpenRouterClient:
 
     def test_build_messages_with_history(self, test_settings):
         """Test message building with conversation history."""
-        from finchat.models import ChatMessage
+        from agent_service.models import ChatMessage
 
         settings = load_settings_from_dict(
             {
@@ -105,55 +106,58 @@ class TestOpenRouterClient:
         assert len(messages) == 4
 
 
-class TestSECEdgarDownloader:
-    """Test SEC EDGAR downloader integration."""
-
-    def test_downloader_initialization(self):
-        """Test downloader can be initialized."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            downloader = SECEdgarDownloader(email="test@example.com", data_dir=tmpdir)
-            assert downloader.data_dir == Path(tmpdir).resolve()
-
-    def test_download_filing_invalid_ticker(self):
-        """Test download with invalid ticker raises error."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            downloader = SECEdgarDownloader(data_dir=tmpdir)
-            with pytest.raises(Exception):  # SECDownloadError
-                downloader.download_filing("INVALIDTICKER", "10-K")
-
-    def test_download_filing_invalid_type(self):
-        """Test download with invalid filing type."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            downloader = SECEdgarDownloader(data_dir=tmpdir)
-            with pytest.raises(Exception, match="Unsupported filing type"):
-                downloader.download_filing("AAPL", "99-K")
-
-    def test_read_filing_missing_file(self):
-        """Test reading non-existent file."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            downloader = SECEdgarDownloader(data_dir=tmpdir)
-            non_existent = Path(tmpdir) / "nonexistent.txt"
-            with pytest.raises(Exception):  # SECDownloadError
-                downloader.read_filing(non_existent)
-
-    def test_extract_sections_from_sample_text(self):
-        """Test section extraction from sample filing text."""
-        downloader = SECEdgarDownloader()
-
-        sample_text = """
-        ITEM 1. BUSINESS
-
-        Our company is a technology leader...
-        We have various products and services.
-
-        ITEM 1A. RISK FACTORS
-
-        There are many risks including market competition.
-        """
-        sections = downloader.extract_financial_sections(sample_text)
-
-        assert "business_overview" in sections
-        assert "risk_factors" in sections
-        assert "Our company" in sections["business_overview"]
+# Note: SECEdgarDownloader tests are skipped because the SEC integration
+# is not currently implemented in the codebase.
+#
+# class TestSECEdgarDownloader:
+#     """Test SEC EDGAR downloader integration."""
+#
+#     def test_downloader_initialization(self):
+#         """Test downloader can be initialized."""
+#         with tempfile.TemporaryDirectory() as tmpdir:
+#             downloader = SECEdgarDownloader(email="test@example.com", data_dir=tmpdir)
+#             assert downloader.data_dir == Path(tmpdir).resolve()
+#
+#     def test_download_filing_invalid_ticker(self):
+#         """Test download with invalid ticker raises error."""
+#         with tempfile.TemporaryDirectory() as tmpdir:
+#             downloader = SECEdgarDownloader(data_dir=tmpdir)
+#             with pytest.raises(Exception):  # SECDownloadError
+#                 downloader.download_filing("INVALIDTICKER", "10-K")
+#
+#     def test_download_filing_invalid_type(self):
+#         """Test download with invalid filing type."""
+#         with tempfile.TemporaryDirectory() as tmpdir:
+#             downloader = SECEdgarDownloader(data_dir=tmpdir)
+#             with pytest.raises(Exception, match="Unsupported filing type"):
+#                 downloader.download_filing("AAPL", "99-K")
+#
+#     def test_read_filing_missing_file(self):
+#         """Test reading non-existent file."""
+#         with tempfile.TemporaryDirectory() as tmpdir:
+#             downloader = SECEdgarDownloader(data_dir=tmpdir)
+#             non_existent = Path(tmpdir) / "nonexistent.txt"
+#             with pytest.raises(Exception):  # SECDownloadError
+#                 downloader.read_filing(non_existent)
+#
+#     def test_extract_sections_from_sample_text(self):
+#         """Test section extraction from sample filing text."""
+#         downloader = SECEdgarDownloader()
+#
+#         sample_text = """
+#         ITEM 1. BUSINESS
+#
+#         Our company is a technology leader...
+#         We have various products and services.
+#
+#         ITEM 1A. RISK FACTORS
+#
+#         There are many risks including market competition.
+#         """
+#         sections = downloader.extract_financial_sections(sample_text)
+#
+#         assert "business_overview" in sections
+#         assert "risk_factors" in sections
+#         assert "Our company" in sections["business_overview"]
 
 

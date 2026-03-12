@@ -27,11 +27,8 @@ dist/
 .env.local
 
 # Project specific
-data/
-*.pdf
-*.txt
-*.htm
-*.html
+data/*
+issues.md
 
 # OS
 .DS_Store

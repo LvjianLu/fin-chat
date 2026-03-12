@@ -82,6 +82,7 @@ class Settings:
     max_document_size: int = 100_000
     app_name: str = "Financial Chatbot"
     debug: bool = False
+    enable_tool_calling: bool = True  # Whether to enable tool calling feature
 
     def __post_init__(self) -> None:
         """Normalize and validate the settings payload."""
@@ -114,6 +115,7 @@ def _load_env_data() -> dict[str, Any]:
         "max_document_size": os.getenv("MAX_DOCUMENT_SIZE", 100_000),
         "app_name": os.getenv("APP_NAME", "Financial Chatbot"),
         "debug": os.getenv("DEBUG", False),
+        "enable_tool_calling": os.getenv("ENABLE_TOOL_CALLING", "true").lower() in ("1", "true", "yes", "on"),
     }
 
 

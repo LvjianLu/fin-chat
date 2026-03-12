@@ -6,11 +6,11 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 
 # Add project packages to Python path for imports
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
+sys.path.insert(0, str(PROJECT_ROOT / "backend" / "finchat_backend"))
 
 import pytest
-from finchat.config import Settings, load_settings_from_dict
+from agent_service.config import Settings, load_settings_from_dict
 
 
 @pytest.fixture

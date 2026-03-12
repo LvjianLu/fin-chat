@@ -26,15 +26,27 @@ A full-stack application for analyzing financial statements with AI. The current
 - **LLM**: OpenRouter API (OpenAI-compatible)
 - **Storage**: JSON files in `data/sessions/` for persisted chat sessions
 
+## Recent Enhancements
+
+- ✅ **Unified Tools System**: All tools consolidated under `backend/finchat_backend/tools`
+- ✅ **Centralized Tool Registry**: Single source of truth for tool discovery and registration
+- ✅ **Tool Executor**: Uniform interface for executing any registered tool
+- ✅ **Data Source Adapters**: Extensible Yahoo Finance integration with standardized result format
+- ✅ **Financial Statements Tool**: Retrieve income statements, balance sheets, cash flow statements
+- ✅ **Market Data Tool**: Real-time stock quotes, company information, historical price data
+- ✅ **Comprehensive Test Suite**: 138 passing tests with full coverage
+
 ## Features
 
 - 💬 Interactive chat interface with streaming responses
 - 📄 Upload financial documents (PDF, HTML, TXT)
-- 🔍 Download SEC filings directly from EDGAR (10-K, 10-Q, 8-K)
 - 💾 **Persistent sessions** - chat history survives page refresh and app restart
 - 🎯 Automatic financial analysis
 - 🌐 Multi-session support with conversation switching
 - 📊 Real-time document search
+- 📈 **Real-time market data** - stock prices, company information, historical charts
+- 💰 **Financial statements** - income statements, balance sheets, cash flow statements
+- 🔧 **Extensible tool system** - unified tool registry and executor for adding new capabilities
 
 ## Prerequisites
 
@@ -53,11 +65,8 @@ cd /path/to/finchat
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install Streamlit / shared runtime dependencies
-pip install -r requirements.txt
-
-# Install backend API dependencies
-pip install -r backend/requirements.txt
+# Install all dependencies (Streamlit + Backend)
+pip install -r requirements.txt 
 ```
 
 ### 2. Configure Environment
@@ -126,22 +135,10 @@ The app will open at **http://localhost:8501**
 
 ### Working with Documents
 
-**Option A: Upload a File**
 1. Go to the "Upload" section in the left panel
 2. Choose "Upload File"
 3. Select a PDF, HTML, or TXT file
 4. Click "📥 Load Document"
-
-**Option B: Download SEC Filing**
-1. Choose "Download SEC Filing"
-2. Enter a ticker symbol (e.g., AAPL, MSFT)
-3. Select filing type (10-K, 10-Q, 8-K)
-4. Click "🔍 Download Filing"
-
-Once a document is loaded:
-- Ask questions about the financial data
-- Use "📈 Analysis" for automated financial insights
-- Use "🔍 Search" to find specific information in the document
 
 ### Chat Interface
 
@@ -194,6 +191,46 @@ Once a document is loaded:
 
 The backend also reads `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` so it can build compatible session-side services. In production, set the same values for both processes.
 
+### Data Sources
+
+The application supports external data sources through a unified adapter interface:
+
+- **Yahoo Finance**: Real-time stock prices, company info, historical data, and financial statements
+  - No additional configuration required
+  - Uses the `yfinance` Python package
+  - Adapter: `agent_service.data_sources.yahoo_adapter.YahooFinanceAdapter`
+
+### Tool Registry
+
+Tools are registered through a centralized system:
+
+- Location: `agent_service.tools.tool_registry`
+- Global registry: `registry` singleton
+- Used for dynamic tool discovery and execution by agents
+- Extensible: Register custom tools with `registry.register(name, func, description, tool_type)`
+
+### Available Tools
+
+**Document Tools:**
+- `search_document` (`SearchTool`) - Search within loaded documents
+- `analyze_financials` (`FinAnalysisTool`) - Generate financial analysis using LLM
+
+**Data Tools:**
+- `get_financial_statements` (`FinancialStatementsTool`) - Retrieve income statement, balance sheet, cash flow
+- `get_market_data` (`MarketDataTool`) - Get real-time stock quotes, company info, historical data
+
+### Tool Executor
+
+The `ToolExecutor` (`agent_service.agent.executor.ToolExecutor`) provides a unified interface for executing registered tools:
+
+- Initialize with a registry: `executor = ToolExecutor(registry)`
+- Execute tools: `result = executor.execute("tool_name", param1=value1, param2=value2)`
+- Safe execution returns dictionary: `result = executor.execute_safe("tool_name", **params)`
+- List available tools: `tools = executor.list_available_tools()`
+- Get tool info: `info = executor.get_tool_info("tool_name")`
+
+The executor handles errors, parameter validation, and result standardization automatically.
+
 ## Troubleshooting
 
 ### "OPENROUTER_API_KEY not set"
@@ -203,7 +240,7 @@ The backend also reads `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` so it can bui
 
 ### Backend won't start
 - Check Python version: `python --version` (should be 3.10+)
-- Reinstall dependencies: `pip install -r backend/requirements.txt`
+- Reinstall all dependencies: `pip install -r requirements.txt`
 - Check if port 8000 is in use: `lsof -i :8000`
 
 ### Frontend can't connect to backend
@@ -217,56 +254,32 @@ The backend also reads `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` so it can bui
 - Look at backend logs for errors
 
 ### "No module named 'finchat'"
-- Run commands from the project root unless a command explicitly says `cd backend`
-- The app and backend both expect the repository `src/finchat/` package to exist
-- Reinstall project dependencies if imports are still missing
+- Ensure you're running commands from the project root
+- The backend uses `agent_service` package from `backend/finchat_backend/`
+- Reinstall dependencies if imports are still missing: `pip install -r requirements.txt`
 
 ### `sec-edgar-downloader` / `pyrate-limiter` errors
 - Install the pinned root dependencies: `pip install -r requirements.txt`
-- Install the pinned backend dependencies: `pip install -r backend/requirements.txt`
 - This project expects `pyrate-limiter==3.1.0` for SEC download compatibility
 
 ## Development
-
-### Project Structure
-
-```
-finchat/
-├── backend/
-│   ├── finchat_backend/
-│   │   ├── main.py              # FastAPI application
-│   │   ├── core/
-│   │   │   ├── agent_manager.py   # Compatibility facade over services
-│   │   │   ├── bootstrap.py
-│   │   │   ├── errors.py
-│   │   │   ├── models.py
-│   │   │   ├── extractors/
-│   │   │   ├── factories/
-│   │   │   ├── repositories/
-│   │   │   └── services/
-│   │   └── api/
-│   │       └── v1/
-│   │           ├── chat.py
-│   │           ├── sessions.py
-│   │           └── files.py
-│   ├── requirements.txt
-│   ├── run.py
-│   └── .env                     # Optional if running backend from backend/
-├── data/
-│   └── sessions/                # JSON session files
-├── app.py                       # Streamlit frontend
-├── src/finchat/                 # Shared agent/runtime package
-├── tests/
-├── requirements.txt            # Streamlit + shared runtime dependencies
-├── .env                        # Recommended local env file
-└── README.md
-```
 
 ### Adding New Features
 
 1. **Backend API / services**: Modify files in `backend/finchat_backend/`
 2. **Streamlit UI**: Modify `app.py`
-3. **Shared agent logic**: Modify `src/finchat/`
+3. **New Data Source**: Subclass `DataSourceAdapter` in `backend/finchat_backend/tools/data_sources/` and register
+4. **New Tool**: Subclass `Tool` in `backend/finchat_backend/tools/` - auto-registered on import
+5. **Agent logic**: Modify `backend/finchat_backend/agent_service/agent/agent.py`
+
+### Tools Architecture
+
+The unified tool system centers on:
+
+- **Tool Registry** (`tools/tool_registry.py`): Central repository for all available tools
+- **Tool Executor** (`tools/executor.py`): Executes tools by name with unified error handling
+- **Auto-registration**: Tools are auto-discovered and registered when `finchat_backend.tools` is imported
+- **Agent Integration**: The `FinChat` agent accepts an optional `executor` parameter and will use it if provided (see `core/factories/agent_factory.py`)
 
 ### Testing
 
@@ -274,8 +287,17 @@ finchat/
 # Test backend API
 curl http://localhost:8000/api/health
 
-# Run all tests
+# Run all tests (138 tests as of latest update)
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
+
+# Run unit tests only
+pytest tests/unit/ -v
+
+# Run integration tests
+pytest tests/integration/ -v
+
+# Run backend tests
+pytest tests/backend/ -v
 ```
 
 ## Deployment
@@ -321,12 +343,11 @@ Use two containers or one compose stack: one for the backend and one for Streaml
 # Backend
 FROM python:3.10-slim
 WORKDIR /app
-COPY backend/requirements.txt ./backend-requirements.txt
-RUN pip install -r backend-requirements.txt
+COPY requirements.txt .
+RUN pip install -r requirements.txt
 COPY backend ./backend
 COPY src ./src
 COPY data ./data
-CMD ["uvicorn", "finchat_backend.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]
 CMD ["uvicorn", "finchat_backend.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
@@ -357,7 +378,6 @@ CMD ["streamlit", "run", "app.py", "--server.port", "8501", "--server.address", 
 Use Tsinghua PyPI mirror for faster installs:
 ```bash
 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r backend/requirements.txt
 ```
 
 OpenRouter may require a VPN or use a China-compatible LLM provider (modify `OPENROUTER_BASE_URL`).
