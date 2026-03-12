@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Streamlit
+.streamlit/
+
+# Environment
+.env
+.env.local
+
+# Project specific
+data/
+*.pdf
+*.txt
+*.htm
+*.html
+
+# OS
+.DS_Store
+Thumbs.db
