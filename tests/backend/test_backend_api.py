@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi.testclient import TestClient
 
+from agent_service.models import APIError
 from finchat_backend.main import app
 from finchat_backend.core.models import DocumentLoadResult, SessionDetail, SessionSummary
 
@@ -58,6 +59,45 @@ class TestBackendApi:
             "response": "assistant reply",
             "session_id": "session-1",
         }
+
+    def test_chat_route_maps_api_error_to_bad_gateway(self, monkeypatch):
+        from finchat_backend.api.v1 import chat as chat_api
+
+        class StubSessionService:
+            def chat(self, session_id: str, message: str) -> str:
+                raise APIError("OpenRouter API error: invalid API key")
+
+        monkeypatch.setattr(chat_api, "session_service", StubSessionService())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/v1/chat",
+            json={"session_id": "session-1", "message": "hello"},
+        )
+
+        assert response.status_code == 502
+        assert response.json()["detail"] == "OpenRouter API error: invalid API key"
+
+    def test_chat_route_maps_auth_error_to_bad_gateway(self, monkeypatch):
+        from finchat_backend.api.v1 import chat as chat_api
+
+        class StubSessionService:
+            def chat(self, session_id: str, message: str) -> str:
+                raise APIError(
+                    "OpenRouter authentication failed. "
+                    "Please check `OPENROUTER_API_KEY` in your `.env` file."
+                )
+
+        monkeypatch.setattr(chat_api, "session_service", StubSessionService())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/v1/chat",
+            json={"session_id": "session-1", "message": "hello"},
+        )
+
+        assert response.status_code == 502
+        assert "OPENROUTER_API_KEY" in response.json()["detail"]
 
     def test_analyze_route_returns_agent_analysis(self, monkeypatch):
         from finchat_backend.api.v1 import chat as chat_api

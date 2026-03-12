@@ -5,6 +5,7 @@ Chat API endpoints.
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from agent_service.models import APIError
 from finchat_backend.core.agent_manager import session_service
 from finchat_backend.core.errors import BackendConfigurationError
 
@@ -40,6 +41,8 @@ async def chat(request: ChatRequest):
         return ChatResponse(response=response, session_id=request.session_id)
     except BackendConfigurationError as exc:
         raise HTTPException(status_code=500, detail=f"Backend not initialized: {exc}")
+    except APIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -53,6 +56,8 @@ async def analyze_document(session_id: str):
         return AnalyzeResponse(response=response, session_id=session_id)
     except BackendConfigurationError as exc:
         raise HTTPException(status_code=500, detail=f"Backend not initialized: {exc}")
+    except APIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

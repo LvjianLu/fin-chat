@@ -1,5 +1,6 @@
 """Agent base class and FinChat implementation."""
 
+import datetime
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -549,7 +550,17 @@ Format as bullet points with specific numbers where available."""
         Returns:
             List of message dictionaries with 'role' and 'content'
         """
-        messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+        # Get current date for context
+        current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+        current_time = datetime.datetime.now().strftime("%H:%M:%S")
+        time_info = f"\n\nCurrent Date: {current_date}\nCurrent Time: {current_time}\n\n"
+
+        messages = [{"role": "system", "content": self.SYSTEM_PROMPT + time_info}]
+
+        logger.debug(
+            "Built system message with time context",
+            extra={"current_date": current_date, "system_prompt_length": len(self.SYSTEM_PROMPT)}
+        )
 
         # Add document context if available
         if self.memory.get_document_context():
@@ -558,6 +569,10 @@ Format as bullet points with specific numbers where available."""
                 "content": f"Document Context:\n\n{self.memory.get_document_context()}\n\nUse this document to answer user questions.",
             }
             messages.append(doc_msg)
+            logger.debug(
+                "Added document context to messages",
+                extra={"doc_length": len(self.memory.get_document_context())}
+            )
 
         # Add conversation history
         history = self.memory.get_history(limit=CONVERSATION_HISTORY_MAX_EXCHANGES)
@@ -565,6 +580,15 @@ Format as bullet points with specific numbers where available."""
             history = []
         for msg in history:
             messages.append(msg.to_dict())
+
+        logger.debug(
+            "Built messages for LLM call",
+            extra={
+                "total_messages": len(messages),
+                "user_message_length": len(user_message),
+                "history_length": len(history)
+            }
+        )
 
         # Add current user message as user role
         messages.append({"role": "user", "content": user_message})

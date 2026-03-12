@@ -174,6 +174,12 @@ class OpenRouterClient:
 
         except Exception as e:
             logger.error("OpenRouter API call failed", exc_info=True)
+            message = str(e)
+            if "401" in message or "User not found" in message:
+                raise APIError(
+                    "OpenRouter authentication failed. "
+                    "Please check `OPENROUTER_API_KEY` in your `.env` file."
+                ) from e
             raise APIError(f"OpenRouter API error: {e}") from e
 
     def is_available(self) -> bool:

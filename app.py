@@ -97,7 +97,29 @@ def api_request(method: str, endpoint: str, **kwargs):
         return response.json()
     except requests.RequestException as e:
         logger.error(f"API request failed: {method} {url} - {e}")
+        response = getattr(e, "response", None)
+        if response is not None:
+            try:
+                payload = response.json()
+                detail = payload.get("detail")
+                if detail:
+                    raise RuntimeError(detail) from e
+            except ValueError:
+                pass
         raise
+
+
+def format_chat_error_message(error: Exception) -> str:
+    """Convert backend/chat errors into a user-facing assistant message."""
+    message = str(error).strip()
+    if not message:
+        return "暂时无法完成这次请求，请稍后重试。"
+
+    return (
+        "暂时无法完成这次请求。\n\n"
+        f"原因：{message}\n\n"
+        "如果这是配置问题，请检查后端服务和 `.env` 中的 `OPENROUTER_API_KEY`。"
+    )
 
 
 def api_health():
@@ -691,7 +713,11 @@ def render_chat_interface():
                             {"role": "assistant", "content": response}
                         )
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        error_message = format_chat_error_message(e)
+                        st.markdown(error_message)
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": error_message}
+                        )
                         logger.error("Chat error", exc_info=True)
 
         # Auto-save after message

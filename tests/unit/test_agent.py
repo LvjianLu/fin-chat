@@ -44,6 +44,24 @@ class TestOpenRouterLLM:
         assert response == "Test response"
         mock_client.chat.assert_called_once_with(messages)
 
+    @patch("agent_service.agent.llm.openrouter.OpenRouterClient")
+    def test_chat_surfaces_client_api_error_message(self, mock_client_class, test_settings):
+        """Test chat preserves friendly API error messages from client."""
+        from agent_service.models import APIError
+
+        mock_client = Mock()
+        mock_client.chat.side_effect = APIError(
+            "OpenRouter authentication failed. "
+            "Please check `OPENROUTER_API_KEY` in your `.env` file."
+        )
+        mock_client_class.return_value = mock_client
+
+        llm = OpenRouterLLM(test_settings)
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with pytest.raises(APIError, match="OPENROUTER_API_KEY"):
+            llm.chat(messages)
+
 
 class TestConversationMemory:
     """Test ConversationMemory."""
