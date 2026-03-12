@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from finchat.agent.memory import ConversationMemory
+from agent_service.agent.memory import ConversationMemory
 from finchat_backend.core.models import SessionRecord
 from finchat_backend.core.repositories.base import SessionRepository
 from finchat_backend.core.services.session_service import SessionService

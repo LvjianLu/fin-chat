@@ -59,6 +59,60 @@ class TestBackendApi:
             "session_id": "session-1",
         }
 
+    def test_analyze_route_returns_agent_analysis(self, monkeypatch):
+        from finchat_backend.api.v1 import chat as chat_api
+
+        class StubAgent:
+            def analyze_financials(self) -> str:
+                return "analysis result"
+
+        class StubSessionService:
+            def require_session(self, session_id: str):
+                assert session_id == "session-1"
+                return StubAgent()
+
+        monkeypatch.setattr(chat_api, "session_service", StubSessionService())
+        client = TestClient(app)
+
+        response = client.post("/api/v1/sessions/session-1/analyze")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "response": "analysis result",
+            "session_id": "session-1",
+        }
+
+    def test_search_route_returns_formatted_results(self, monkeypatch):
+        from finchat_backend.api.v1 import chat as chat_api
+        from agent_service.models import SearchResult
+
+        class StubAgent:
+            def search_document(self, query: str):
+                assert query == "revenue"
+                return SearchResult(
+                    query=query,
+                    matches=[{"match": "Revenue", "context": "Revenue was $100"}],
+                    total_matches=1,
+                    displayed_matches=1,
+                )
+
+        class StubSessionService:
+            def require_session(self, session_id: str):
+                assert session_id == "session-1"
+                return StubAgent()
+
+        monkeypatch.setattr(chat_api, "session_service", StubSessionService())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/v1/sessions/session-1/search",
+            json={"query": "revenue"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["session_id"] == "session-1"
+        assert "Revenue" in response.json()["result"]
+
     def test_upload_route_maps_document_service_result(self, monkeypatch):
         from finchat_backend.api.v1 import files as files_api
 

@@ -1,9 +1,12 @@
 """Financial analysis tool for generating document analysis."""
 
 import logging
+from typing import TYPE_CHECKING
 
 from .base import Tool, ToolResult
-from ..llm import LLMProvider
+
+if TYPE_CHECKING:
+    from agent_service.agent.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +28,7 @@ class FinAnalysisTool(Tool):
 
 Format as bullet points with specific numbers where available."""
 
-    def __init__(self, llm: LLMProvider):
+    def __init__(self, llm: "LLMProvider"):
         """Initialize financial analysis tool.
 
         Args:

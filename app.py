@@ -11,7 +11,6 @@ Settings UI in the frontend only for API base URL override.
 """
 
 import datetime
-import logging
 import sys
 import os
 from pathlib import Path
@@ -22,30 +21,21 @@ import streamlit as st
 import requests
 
 ROOT_DIR = Path(__file__).resolve().parent
-FINCHAT_BACKEND_DIR = ROOT_DIR / "backend" / "finchat_backend"
-if FINCHAT_BACKEND_DIR.exists():
-    sys.path.insert(0, str(FINCHAT_BACKEND_DIR))
+BACKEND_DIR = ROOT_DIR / "backend"
+# Add backend so `finchat_backend` can be imported as a package.
+if BACKEND_DIR.exists() and str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Configure logging
-from agent_service.utils.logger import get_logger, configure_root_logger
+from finchat_backend.agent_service.utils.logger import get_logger, configure_root_logger
 
 configure_root_logger()
 logger = get_logger(__name__)
 
-# Import from agent framework
-from agent_service.config import load_settings_from_dict
-from agent_service.agent.agent import FinChat
-from agent_service.agent.llm.openrouter import OpenRouterLLM
-from agent_service.agent.memory import ConversationMemory
-from agent_service.agent.tools import (
-    SearchTool,
-    FinAnalysisTool,
-)
-from agent_service.utils.file_utils import ensure_data_directory
-from agent_service.utils.validators import validate_api_key
+from finchat_backend.agent_service.utils.file_utils import ensure_data_directory
 
 # Page configuration
 st.set_page_config(
@@ -79,8 +69,6 @@ st.markdown("""
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 # Initialize session state
-if "finchat" not in st.session_state:
-    st.session_state.finchat = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "current_doc" not in st.session_state:
@@ -111,21 +99,18 @@ def api_request(method: str, endpoint: str, **kwargs):
         logger.error(f"API request failed: {method} {url} - {e}")
         raise
 
+
+def api_health():
+    """Check whether the backend is reachable."""
+    return api_request("GET", "/api/health")
+
 def api_list_sessions():
     """Fetch all sessions from backend (both in-memory and persisted)."""
     return api_request("GET", "/api/v1/sessions")
 
-def api_list_persisted_sessions():
-    """Fetch all persisted sessions from backend."""
-    return api_request("GET", "/api/v1/persisted-sessions")
-
 def api_save_session(session_id: str):
     """Save a session to disk via backend."""
     return api_request("POST", f"/api/v1/sessions/{session_id}/persist")
-
-def api_load_persisted_session(session_id: str):
-    """Load a persisted session into memory via backend."""
-    return api_request("POST", f"/api/v1/persisted-sessions/{session_id}/load")
 
 def api_delete_persisted_session(session_id: str):
     """Delete a persisted session."""
@@ -136,21 +121,55 @@ def api_get_session_detail(session_id: str):
     return api_request("GET", f"/api/v1/sessions/{session_id}")
 
 
-def api_sync_session(
-    session_id: str,
-    messages: List[Dict[str, str]],
-    doc_source: Optional[str] = None,
-    document_content: Optional[str] = None,
-    persist: bool = True,
-):
-    """Sync the current local session state into the backend."""
-    payload = {
-        "messages": messages,
-        "doc_source": doc_source,
-        "document_content": document_content,
-        "persist": persist,
-    }
-    return api_request("PUT", f"/api/v1/sessions/{session_id}", json=payload)
+def api_chat(session_id: str, message: str):
+    """Send a chat message through the backend session runtime."""
+    return api_request(
+        "POST",
+        "/api/v1/chat",
+        json={"session_id": session_id, "message": message},
+    )
+
+
+def api_upload_document(session_id: str, uploaded_file):
+    """Upload a document through the backend."""
+    file_bytes = uploaded_file.getvalue()
+    return api_request(
+        "POST",
+        "/api/v1/upload",
+        data={"session_id": session_id},
+        files={
+            "file": (
+                uploaded_file.name,
+                file_bytes,
+                uploaded_file.type or "application/octet-stream",
+            )
+        },
+    )
+
+
+def api_clear_document(session_id: str):
+    """Clear the current document from the backend session."""
+    return api_request("DELETE", f"/api/v1/sessions/{session_id}/document")
+
+
+def api_clear_history(session_id: str):
+    """Clear chat history for the current backend session."""
+    return api_request("DELETE", f"/api/v1/sessions/{session_id}/history")
+
+
+def api_analyze_document(session_id: str):
+    """Run financial analysis for the current backend session."""
+    return api_request("POST", f"/api/v1/sessions/{session_id}/analyze")
+
+
+def api_search_document(session_id: str, query: str):
+    """Search the current backend session document."""
+    return api_request(
+        "POST",
+        f"/api/v1/sessions/{session_id}/search",
+        json={"query": query},
+    )
+
 
 # ------------------ Session Management Functions ------------------
 
@@ -163,42 +182,8 @@ def refresh_sessions_from_backend():
         st.error(f"Failed to fetch sessions: {e}")
 
 
-def build_local_finchat(
-    messages: Optional[List[Dict[str, str]]] = None,
-    document_content: Optional[str] = None,
-    doc_source: Optional[str] = None,
-):
-    """Build a local FinChat runtime and optionally hydrate it."""
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        logger.warning("OPENROUTER_API_KEY not found in environment")
-        return None
-
-    model = os.getenv("OPENROUTER_MODEL", "stepfun/step-3.5-flash:free")
-    validated_key = validate_api_key(api_key)
-    settings = load_settings_from_dict(
-        {
-            "openrouter_api_key": validated_key,
-            "openrouter_model": model,
-        }
-    )
-
-    llm = OpenRouterLLM(settings)
-    memory = ConversationMemory()
-    if document_content:
-        memory.set_document(document_content, doc_source or "Restored document")
-    for message in messages or []:
-        memory.add_message(message["role"], message["content"])
-
-    tools = [
-        SearchTool(memory),
-        FinAnalysisTool(llm),
-    ]
-    return FinChat(tools=tools, llm=llm, memory=memory)
-
-
 def hydrate_local_session(detail: Dict[str, Any]) -> None:
-    """Restore Streamlit state and local agent from a backend session."""
+    """Restore Streamlit state from a backend session."""
     messages = detail.get("messages", [])
     document_content = detail.get("document_content")
     doc_source = detail.get("doc_source")
@@ -206,72 +191,15 @@ def hydrate_local_session(detail: Dict[str, Any]) -> None:
     st.session_state.messages = messages
     st.session_state.doc_source = doc_source
     st.session_state.current_doc = document_content
-    st.session_state.finchat = build_local_finchat(
-        messages=messages,
-        document_content=document_content,
-        doc_source=doc_source,
-    )
-
-def sync_current_session_to_backend():
-    """Save current session to backend persistence."""
-    if not st.session_state.current_session_id:
-        return False
-    try:
-        result = api_sync_session(
-            st.session_state.current_session_id,
-            messages=st.session_state.messages,
-            doc_source=st.session_state.doc_source,
-            document_content=st.session_state.current_doc,
-            persist=True,
-        )
-        logger.info(f"Auto-saved session {st.session_state.current_session_id}")
-        # Optimistically update persisted flag in local sessions list
-        for sess in st.session_state.conversation_sessions:
-            if sess["id"] == st.session_state.current_session_id:
-                sess["persisted"] = True
-                sess["message_count"] = len(st.session_state.messages)
-                sess["doc_source"] = st.session_state.doc_source
-                if st.session_state.messages:
-                    first_user_msg = next(
-                        (
-                            msg["content"]
-                            for msg in st.session_state.messages
-                            if msg["role"] == "user"
-                        ),
-                        "New Chat",
-                    )
-                    sess["title"] = (
-                        first_user_msg[:30] + "..."
-                        if len(first_user_msg) > 30
-                        else first_user_msg
-                    )
-                break
-        return True
-    except Exception as e:
-        logger.warning(f"Auto-save failed: {e}")
-        return False
-
-def load_session_from_backend(session_id: str):
-    """Load a saved session into current workspace."""
-    try:
-        result = api_load_persisted_session(session_id)
-        # Refresh session list
-        refresh_sessions_from_backend()
-        # Set current session
-        st.session_state.current_session_id = session_id
-        detail = api_get_session_detail(session_id)
-        hydrate_local_session(detail)
-        st.rerun()
-        return True
-    except Exception as e:
-        st.error(f"Failed to load session: {e}")
-        return False
 
 def start_new_session():
     """Start a new conversation session."""
     # Save current session first if it has messages
     if st.session_state.current_session_id and st.session_state.messages:
-        sync_current_session_to_backend()
+        try:
+            api_save_session(st.session_state.current_session_id)
+        except Exception as e:
+            logger.warning(f"Auto-save before new session failed: {e}")
 
     # Create a new session via backend
     try:
@@ -293,7 +221,10 @@ def switch_to_session(session_id: str):
     """Switch to a different session."""
     # Save current session before switching
     if st.session_state.current_session_id and st.session_state.messages:
-        sync_current_session_to_backend()
+        try:
+            api_save_session(st.session_state.current_session_id)
+        except Exception as e:
+            logger.warning(f"Auto-save before session switch failed: {e}")
 
     try:
         detail = api_get_session_detail(session_id)
@@ -333,23 +264,11 @@ def delete_current_session():
 def auto_save_after_message():
     """Automatically save session after each message exchange."""
     if st.session_state.current_session_id:
-        success = sync_current_session_to_backend()
-        if success:
+        try:
+            api_save_session(st.session_state.current_session_id)
             logger.debug(f"Auto-saved session {st.session_state.current_session_id}")
-
-# ------------------ Initialization ------------------
-
-def init_finchat_from_env() -> None:
-    """Initialize the FinChat agent from environment variables."""
-    if st.session_state.finchat is not None:
-        return
-
-    try:
-        st.session_state.finchat = build_local_finchat()
-        logger.info("FinChat initialized from environment")
-    except Exception as e:
-        logger.error("FinChat initialization from env failed", exc_info=True)
-        st.session_state.finchat = None
+        except Exception as e:
+            logger.warning(f"Auto-save failed: {e}")
 
 def load_most_recent_session_or_create_new():
     """On first startup, load most recent persisted session or create new."""
@@ -381,18 +300,13 @@ def main():
     try:
         ensure_data_directory()
 
-        # Try to auto-initialize from .env
-        init_finchat_from_env()
-
-        if not st.session_state.finchat:
+        try:
+            api_health()
+        except Exception as e:
             st.warning(
-                "⚠️ **Configuration Required**\\n\\n"
-                "The chatbot is not configured. Please set the following environment variables:\\n\\n"
-                "- `OPENROUTER_API_KEY`: Your OpenRouter API key\\n"
-                "- `OPENROUTER_MODEL` (optional): Model to use (default: stepfun/step-3.5-flash:free)\\n\\n"
-                "You can set these in a `.env` file in the project root."
+                "⚠️ Backend unavailable. Start the FastAPI backend and verify its environment configuration."
             )
-            st.info("Once configured, restart the app to load the settings.")
+            st.info(f"Backend check failed: {e}")
             return
 
         # Always refresh sessions list from backend to keep UI up-to-date
@@ -408,7 +322,6 @@ def main():
                 detail = api_get_session_detail(st.session_state.current_session_id)
                 if (
                     not st.session_state.messages
-                    or st.session_state.finchat is None
                     or (
                         st.session_state.current_doc is None
                         and detail.get("document_content") is not None
@@ -564,10 +477,6 @@ def render_upload_section():
     """Render document upload section (only file upload, no SEC download)."""
     st.subheader("📁 Upload")
 
-    if not st.session_state.finchat:
-        st.warning("⚠️ FinChat not initialized")
-        return
-
     # Upload section only
     uploaded_file = st.file_uploader(
         "Upload financial document",
@@ -580,39 +489,28 @@ def render_upload_section():
             "📥 Load Document", type="primary", use_container_width=True, key="load_doc_btn"
         ):
             with st.spinner("Processing document..."):
-                content = process_uploaded_file(uploaded_file)
-                if content:
-                    st.session_state.current_doc = content
-                    st.session_state.doc_source = (
-                        f"Uploaded: {uploaded_file.name}"
+                try:
+                    api_upload_document(st.session_state.current_session_id, uploaded_file)
+                    detail = api_get_session_detail(st.session_state.current_session_id)
+                    hydrate_local_session(detail)
+                    st.success(
+                        f"Loaded {uploaded_file.name} ({len(st.session_state.current_doc or ''):,} chars)"
                     )
-                    try:
-                        st.session_state.finchat.load_document(
-                            content, f"Uploaded file: {uploaded_file.name}"
-                        )
-                        st.success(
-                            f"Loaded {uploaded_file.name} ({len(content):,} chars)"
-                        )
-                        # Save session after loading doc
-                        if st.session_state.current_session_id:
-                            sync_current_session_to_backend()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to load document: {e}")
+                    auto_save_after_message()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to load document: {e}")
 
     # Clear document button
-    if st.session_state.finchat and st.session_state.finchat.has_document():
+    if st.session_state.current_doc:
         st.divider()
         if st.button(
             "🗑️ Clear Doc", type="secondary", use_container_width=True, key="clear_doc_btn"
         ):
             try:
-                st.session_state.finchat.clear_document()
-                st.session_state.current_doc = None
-                st.session_state.doc_source = None
-                # Also clear from current session
-                if st.session_state.current_session_id:
-                    sync_current_session_to_backend()
+                api_clear_document(st.session_state.current_session_id)
+                detail = api_get_session_detail(st.session_state.current_session_id)
+                hydrate_local_session(detail)
                 st.rerun()
             except Exception as e:
                 st.error(f"Error clearing document: {e}")
@@ -642,10 +540,11 @@ def render_upload_section():
             if search_query and st.button("Search", key="exec_search_btn"):
                 with st.spinner("Searching..."):
                     try:
-                        result = st.session_state.finchat.search_document(
-                            search_query
+                        result = api_search_document(
+                            st.session_state.current_session_id,
+                            search_query,
                         )
-                        st.text_area("Results", result.format_results(), height=200)
+                        st.text_area("Results", result["result"], height=200)
                     except Exception as e:
                         st.error(f"Search error: {e}")
 
@@ -719,14 +618,16 @@ def render_chat_interface():
 
         # Quick analysis feature (only if document loaded)
         if st.session_state.get("quick_analysis", False):
-            if not st.session_state.finchat.has_document():
+            if not st.session_state.current_doc:
                 st.warning("Quick analysis requires a loaded document.")
                 st.session_state.quick_analysis = False
             else:
                 with st.chat_message("assistant"):
                     with st.spinner("Analyzing financials..."):
                         try:
-                            response = st.session_state.finchat.analyze_financials()
+                            response = api_analyze_document(
+                                st.session_state.current_session_id
+                            )["response"]
                             st.markdown(response)
                             st.session_state.messages.append(
                                 {"role": "assistant", "content": response}
@@ -737,7 +638,7 @@ def render_chat_interface():
                 st.session_state.quick_analysis = False
 
         # Welcome message for first-time users
-        if not st.session_state.messages and not st.session_state.finchat.has_document():
+        if not st.session_state.messages and not st.session_state.current_doc:
             with st.chat_message("assistant"):
                 st.info(
                     "👋 Hello! I'm your financial analysis assistant. You can upload a financial document to analyze, or just ask me general financial questions."
@@ -760,17 +661,13 @@ def render_chat_interface():
         st.write("")  # Vertical spacing
         st.write("")
         if st.button("🗑️ Clear", use_container_width=True, type="secondary", key="clear_chat_btn"):
-            # Clear current session's messages in place
-            st.session_state.messages.clear()
-            # Also clear agent memory
-            if st.session_state.finchat:
-                try:
-                    st.session_state.finchat.memory.clear_history()
-                except:
-                    pass
-            # Save cleared session
             if st.session_state.current_session_id:
-                sync_current_session_to_backend()
+                try:
+                    api_clear_history(st.session_state.current_session_id)
+                    detail = api_get_session_detail(st.session_state.current_session_id)
+                    hydrate_local_session(detail)
+                except Exception as e:
+                    st.error(f"Failed to clear chat: {e}")
             st.rerun()
 
     if prompt:
@@ -785,7 +682,10 @@ def render_chat_interface():
             with st.chat_message("assistant"):
                 with st.spinner("Analyzing..."):
                     try:
-                        response = st.session_state.finchat.chat(prompt)
+                        response = api_chat(
+                            st.session_state.current_session_id,
+                            prompt,
+                        )["response"]
                         st.markdown(response)
                         st.session_state.messages.append(
                             {"role": "assistant", "content": response}
@@ -799,45 +699,6 @@ def render_chat_interface():
 
         # Auto-rerun to update UI
         st.rerun()
-
-def process_uploaded_file(uploaded_file):
-    """Process uploaded file and extract text."""
-    try:
-        if uploaded_file.type == "text/plain" or uploaded_file.name.endswith(".txt"):
-            content = str(uploaded_file.read(), "utf-8")
-        elif uploaded_file.name.endswith(".pdf"):
-            import PyPDF2
-            import pdfplumber
-
-            # Try PyPDF2 first, fallback to pdfplumber
-            try:
-                pdf_reader = PyPDF2.PdfReader(uploaded_file)
-                content = ""
-                for page in pdf_reader.pages:
-                    content += page.extract_text() + "\n"
-            except:
-                with pdfplumber.open(uploaded_file) as pdf:
-                    content = ""
-                    for page in pdf.pages:
-                        content += page.extract_text() + "\n"
-        elif uploaded_file.name.endswith((".htm", "html")):
-            from bs4 import BeautifulSoup
-
-            content = str(uploaded_file.read(), "utf-8")
-            soup = BeautifulSoup(content, "lxml")
-            content = soup.get_text()
-            content = " ".join(content.split())
-        else:
-            st.error("Unsupported file type")
-            return None
-
-        return content
-    except Exception as e:
-        st.error(f"Error processing file: {e}")
-        logger.error(
-            "File processing error", exc_info=True, extra={"file": uploaded_file.name}
-        )
-        return None
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock
 
-from finchat.utils.validators import (
+from agent_service.utils.validators import (
     validate_ticker,
     validate_file_upload,
     validate_api_key,
@@ -12,13 +12,13 @@ from finchat.utils.validators import (
     validate_email,
     validate_positive_int,
 )
-from finchat.utils.text_utils import (
+from agent_service.utils.text_utils import (
     truncate_text,
     clean_text,
     sanitize_filename,
     extract_numbers_with_context,
 )
-from finchat.utils.file_utils import (
+from agent_service.utils.file_utils import (
     ensure_data_directory,
     read_file_safe,
     is_safe_filepath,
@@ -87,7 +87,7 @@ class TestValidateFileUpload:
 
     def test_file_too_large(self):
         """Test file exceeding size limit."""
-        from finchat.constants import MAX_UPLOAD_SIZE_BYTES
+        from agent_service.constants import MAX_UPLOAD_SIZE_BYTES
 
         mock_file = Mock()
         mock_file.name = "large.pdf"
