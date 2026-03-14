@@ -11,14 +11,8 @@ from finchat_backend.core.bootstrap import ensure_project_path
 
 ensure_project_path()
 
-try:
-    from dotenv import load_dotenv
-except ModuleNotFoundError:
-    def load_dotenv() -> bool:
-        return False
-
 from agent_service.agent.agent import FinChat
-from agent_service.config import Settings, load_settings_from_dict
+from agent_service.config import Settings, load_project_dotenv, load_settings_from_dict
 from finchat_backend.core.errors import (
     BackendConfigurationError,
     SessionNotFoundError,
@@ -38,7 +32,7 @@ class SessionService:
         factory: Optional[FinChatAgentFactory] = None,
         settings: Optional[Settings] = None,
     ):
-        load_dotenv()
+        load_project_dotenv()
         self._repository = repository
         self._factory = factory
         self._settings = settings
@@ -73,6 +67,7 @@ class SessionService:
         if self._initialized:
             return
 
+        load_project_dotenv()
         api_key = os.getenv("OPENROUTER_API_KEY", "")
         model = os.getenv("OPENROUTER_MODEL", "stepfun/step-3.5-flash:free")
         if not api_key:

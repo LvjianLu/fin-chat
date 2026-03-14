@@ -1,7 +1,10 @@
 """Tests for configuration module."""
 
+import os
+
 import pytest
 
+from agent_service import config as config_module
 from agent_service.config import Settings, load_settings_from_dict
 from agent_service.models import ConfigurationError
 
@@ -71,6 +74,27 @@ class TestSettings:
         assert settings.openrouter_model == "stepfun/step-3.5-flash:free"
         assert settings.openrouter_base_url == "https://openrouter.ai/api/v1"
         assert settings.max_document_size == 100_000
+
+    def test_load_project_dotenv_reads_backend_env(self, tmp_path):
+        """Test that backend/.env is loaded when root .env is absent."""
+        backend_dir = tmp_path / "backend"
+        backend_dir.mkdir()
+        (backend_dir / ".env").write_text(
+            "OPENROUTER_API_KEY=sk-or-backend1234567890\n"
+            "OPENROUTER_MODEL=test/backend-model\n",
+            encoding="utf-8",
+        )
+
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ.pop("OPENROUTER_MODEL", None)
+        try:
+            assert config_module.load_project_dotenv(project_root=tmp_path) is True
+            settings = load_settings_from_dict()
+            assert settings.openrouter_api_key == "sk-or-backend1234567890"
+            assert settings.openrouter_model == "test/backend-model"
+        finally:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            os.environ.pop("OPENROUTER_MODEL", None)
 
     def test_max_document_size_validation(self):
         """Test max document size validation."""

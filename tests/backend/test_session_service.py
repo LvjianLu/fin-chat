@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
 
+from agent_service import config as config_module
 from agent_service.agent.memory import ConversationMemory
 from finchat_backend.core.models import SessionRecord
 from finchat_backend.core.repositories.base import SessionRepository
@@ -148,3 +150,56 @@ class TestSessionService:
         assert detail.messages[0]["content"] == "question"
         assert detail.doc_source == "Uploaded: report.txt"
         assert detail.document_content == "Revenue was $100 million."
+
+    def test_lazy_init_reads_backend_env_file(self, tmp_path, monkeypatch):
+        from finchat_backend.core.services import session_service as session_service_module
+
+        backend_dir = tmp_path / "backend"
+        backend_dir.mkdir()
+        (backend_dir / ".env").write_text(
+            "OPENROUTER_API_KEY=sk-or-backend1234567890\n"
+            "OPENROUTER_MODEL=test/backend-model\n",
+            encoding="utf-8",
+        )
+
+        class StubRepository:
+            def __init__(self, data_dir: str):
+                self.data_dir = data_dir
+
+            def save_session(self, record: SessionRecord) -> bool:
+                return True
+
+            def load_session(self, session_id: str):
+                return None
+
+            def delete_session(self, session_id: str) -> bool:
+                return False
+
+            def list_sessions(self):
+                return []
+
+            def session_exists(self, session_id: str) -> bool:
+                return False
+
+        class StubFactory:
+            def __init__(self, settings):
+                self.settings = settings
+
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+        monkeypatch.setattr(
+            session_service_module,
+            "load_project_dotenv",
+            lambda: config_module.load_project_dotenv(project_root=tmp_path),
+        )
+        monkeypatch.setattr(session_service_module, "FileSessionRepository", StubRepository)
+        monkeypatch.setattr(session_service_module, "FinChatAgentFactory", StubFactory)
+
+        try:
+            service = session_service_module.SessionService()
+            service._ensure_initialized()
+            assert service.settings.openrouter_api_key == "sk-or-backend1234567890"
+            assert service.settings.openrouter_model == "test/backend-model"
+        finally:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            os.environ.pop("OPENROUTER_MODEL", None)
