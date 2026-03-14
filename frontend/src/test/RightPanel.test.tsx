@@ -8,8 +8,19 @@ import { AppProvider } from '../hooks/useAppState';
 jest.mock('@/services/api', () => ({
   healthCheck: jest.fn().mockResolvedValue({ status: 'ok' }),
   listSessions: jest.fn().mockResolvedValue([]),
-  createSession: jest.fn(),
-  getSessionDetail: jest.fn(),
+  createSession: jest.fn().mockResolvedValue({
+    id: 'session-1',
+    title: 'New Chat',
+    message_count: 0,
+    timestamp: new Date().toISOString(),
+    persisted: false,
+  }),
+  getSessionDetail: jest.fn().mockResolvedValue({
+    id: 'session-1',
+    messages: [],
+    document_content: null,
+    doc_source: null,
+  }),
 }));
 
 const renderWithProvider = (component: React.ReactNode) => {
