@@ -1,6 +1,6 @@
 """Document comparison API endpoints."""
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field
 
@@ -29,7 +29,7 @@ class CompareResponse(BaseModel):
 @router.post("/compare", response_model=CompareResponse)
 async def compare_documents(
     files: List[UploadFile] = File(..., description="Documents to compare"),
-    query: Optional[str] = Form(None, description="Optional comparison query")
+    query: Optional[str] = Query(None, description="Optional comparison query")
 ):
     """Compare multiple documents.
 
