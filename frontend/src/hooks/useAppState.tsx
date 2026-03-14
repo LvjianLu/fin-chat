@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
 import type { Session, Message, Agent, Plan, SearchResult } from '@/types';
 import * as api from '@/services/api';
+import { extractApiErrorMessage } from '@/services/error';
 
 interface AppState {
   // Current session
@@ -283,6 +284,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const sendMessage = async (content: string) => {
+    if (!state.currentSessionId) {
+      dispatch({
+        type: 'ADD_MESSAGE',
+        payload: {
+          id: generateId(),
+          role: 'assistant',
+          content: 'Error: No active session. Please create or reload a session and try again.',
+          timestamp: new Date(),
+        },
+      });
+      return;
+    }
+
     const userMessage: Message = {
       id: generateId(),
       role: 'user',
@@ -302,8 +316,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
       dispatch({ type: 'ADD_MESSAGE', payload: assistantMessage });
       await autoSave();
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to send message';
+    } catch (error: unknown) {
+      const errorMessage = extractApiErrorMessage(error);
       const errorMsg: Message = {
         id: generateId(),
         role: 'assistant',
@@ -342,8 +356,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'SET_CURRENT_DOC', payload: session.document_content || null });
       dispatch({ type: 'SET_MESSAGES', payload: session.messages || state.messages });
       await autoSave();
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to upload document';
+    } catch (error: unknown) {
+      const errorMessage = extractApiErrorMessage(error);
       dispatch({ type: 'SET_ERROR', payload: errorMessage });
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
@@ -376,8 +390,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
       dispatch({ type: 'ADD_MESSAGE', payload: assistantMessage });
       await autoSave();
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to analyze document';
+    } catch (error: unknown) {
+      const errorMessage = extractApiErrorMessage(error);
       dispatch({
         type: 'ADD_MESSAGE',
         payload: {
@@ -400,8 +414,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const response = await api.searchDocument(state.currentSessionId, query);
       return response.result;
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to search document';
+    } catch (error: unknown) {
+      const errorMessage = extractApiErrorMessage(error);
       throw new Error(errorMessage);
     }
   };
