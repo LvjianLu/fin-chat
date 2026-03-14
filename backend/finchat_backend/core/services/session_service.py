@@ -329,7 +329,7 @@ class SessionService:
         if record is None:
             return False
         self._records[session_id] = record
-        if self.is_ready():
+        if self._initialized:
             self._agents[session_id] = self._build_agent_from_record(record)
         return True
 
