@@ -6,7 +6,9 @@ from typing import Iterable, Optional
 
 from finchat_backend.core.errors import DocumentProcessingError
 from finchat_backend.core.extractors.base import TextExtractor
+from finchat_backend.core.extractors.csv import CsvTextExtractor
 from finchat_backend.core.extractors.html import HtmlTextExtractor
+from finchat_backend.core.extractors.json import JsonTextExtractor
 from finchat_backend.core.extractors.pdf import PdfTextExtractor
 from finchat_backend.core.extractors.text import PlainTextExtractor
 from finchat_backend.core.models import DocumentLoadResult
@@ -28,6 +30,8 @@ class DocumentService:
                 PlainTextExtractor(),
                 PdfTextExtractor(),
                 HtmlTextExtractor(),
+                JsonTextExtractor(),
+                CsvTextExtractor(),
             )
         )
 
