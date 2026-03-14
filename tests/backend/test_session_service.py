@@ -151,6 +151,46 @@ class TestSessionService:
         assert detail.doc_source == "Uploaded: report.txt"
         assert detail.document_content == "Revenue was $100 million."
 
+    def test_create_session_without_api_key_keeps_session_routes_available(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+        service = SessionService(
+            repository=InMemorySessionRepository(),
+            settings=None,
+            factory=None,
+        )
+
+        created = service.create_session()
+        detail = service.get_session_detail(created.id)
+        sessions = service.list_sessions()
+
+        assert created.id == detail.id
+        assert detail.messages == []
+        assert sessions[0].id == created.id
+        assert sessions[0].persisted is False
+
+    def test_update_session_state_without_api_key_persists_session_record(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+        repository = InMemorySessionRepository()
+        service = SessionService(repository=repository, settings=None, factory=None)
+
+        created = service.create_session()
+        service.update_session_state(
+            created.id,
+            messages=[{"role": "user", "content": "hello"}],
+            doc_source="Uploaded: report.txt",
+            document_content="Revenue",
+            persist=True,
+        )
+        restored = SessionService(repository=repository, settings=None, factory=None)
+        assert restored.load_session(created.id) is True
+        detail = restored.get_session_detail(created.id)
+
+        assert detail.messages == [{"role": "user", "content": "hello"}]
+        assert detail.doc_source == "Uploaded: report.txt"
+        assert detail.document_content == "Revenue"
+
     def test_lazy_init_reads_backend_env_file(self, tmp_path, monkeypatch):
         from finchat_backend.core.services import session_service as session_service_module
 

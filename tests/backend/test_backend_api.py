@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from agent_service.models import APIError
 from finchat_backend.main import app
 from finchat_backend.core.models import DocumentLoadResult, SessionDetail, SessionSummary
+from finchat_backend.core.services.session_service import SessionService
 
 
 class TestBackendApi:
@@ -36,6 +37,28 @@ class TestBackendApi:
         assert response.status_code == 200
         assert response.json()[0]["id"] == "session-1"
         assert response.json()[0]["persisted"] is True
+
+    def test_sessions_routes_work_without_api_key(self, monkeypatch, tmp_path):
+        from finchat_backend.api.v1 import sessions as sessions_api
+        from finchat_backend.core.repositories.file_session_repository import FileSessionRepository
+
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+        monkeypatch.setattr(
+            sessions_api,
+            "session_service",
+            SessionService(repository=FileSessionRepository(data_dir=str(tmp_path))),
+        )
+        client = TestClient(app)
+
+        list_response = client.get("/api/v1/sessions")
+        create_response = client.post("/api/v1/sessions")
+
+        assert list_response.status_code == 200
+        assert list_response.json() == []
+        assert create_response.status_code == 200
+        assert create_response.json()["id"]
+        assert create_response.json()["persisted"] is False
 
     def test_chat_route_returns_service_response(self, monkeypatch):
         from finchat_backend.api.v1 import chat as chat_api
