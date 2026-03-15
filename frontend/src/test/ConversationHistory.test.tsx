@@ -6,10 +6,21 @@ import { AppProvider } from '../hooks/useAppState';
 
 // Mock the API
 jest.mock('@/services/api', () => ({
-  healthCheck: jest.fn(),
-  listSessions: jest.fn(),
-  createSession: jest.fn(),
-  getSessionDetail: jest.fn(),
+  healthCheck: jest.fn().mockResolvedValue({ status: 'ok' }),
+  listSessions: jest.fn().mockResolvedValue([]),
+  createSession: jest.fn().mockResolvedValue({
+    id: 'session-new',
+    title: 'New Chat',
+    message_count: 0,
+    timestamp: new Date().toISOString(),
+    persisted: false,
+  }),
+  getSessionDetail: jest.fn().mockResolvedValue({
+    id: 'session-new',
+    messages: [],
+    document_content: null,
+    doc_source: null,
+  }),
   deleteSession: jest.fn(),
   deletePersistedSession: jest.fn(),
 }));

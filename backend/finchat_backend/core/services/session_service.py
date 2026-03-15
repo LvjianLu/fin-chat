@@ -5,20 +5,16 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from finchat_backend.core.bootstrap import ensure_project_path
 
 ensure_project_path()
 
-try:
-    from dotenv import load_dotenv
-except ModuleNotFoundError:
-    def load_dotenv() -> bool:
-        return False
-
 from agent_service.agent.agent import FinChat
-from agent_service.config import Settings, load_settings_from_dict
+from agent_service.constants import DEFAULT_DATA_DIR
+from agent_service.config import Settings, load_project_dotenv, load_settings_from_dict
 from finchat_backend.core.errors import (
     BackendConfigurationError,
     SessionNotFoundError,
@@ -38,15 +34,16 @@ class SessionService:
         factory: Optional[FinChatAgentFactory] = None,
         settings: Optional[Settings] = None,
     ):
-        load_dotenv()
+        load_project_dotenv()
         self._repository = repository
         self._factory = factory
         self._settings = settings
         self._agents: dict[str, FinChat] = {}
         self._records: dict[str, SessionRecord] = {}
         self._initialized = settings is not None and repository is not None and factory is not None
-        if self._initialized:
-            self._load_persisted_sessions()
+        self._records_loaded = False
+        self._ensure_repository()
+        self._load_persisted_sessions(build_agents=self._initialized)
 
     @property
     def agents(self) -> dict[str, FinChat]:
@@ -57,7 +54,7 @@ class SessionService:
     @property
     def repository(self) -> SessionRepository:
         """Return the initialized session repository."""
-        self._ensure_initialized()
+        self._ensure_repository()
         assert self._repository is not None
         return self._repository
 
@@ -73,6 +70,7 @@ class SessionService:
         if self._initialized:
             return
 
+        load_project_dotenv()
         api_key = os.getenv("OPENROUTER_API_KEY", "")
         model = os.getenv("OPENROUTER_MODEL", "stepfun/step-3.5-flash:free")
         if not api_key:
@@ -84,20 +82,35 @@ class SessionService:
                 "openrouter_model": model,
             }
         )
-        self._repository = self._repository or FileSessionRepository(
-            data_dir=self._settings.data_dir
-        )
+        self._ensure_repository(data_dir=self._settings.data_dir)
         self._factory = self._factory or FinChatAgentFactory(self._settings)
-        self._load_persisted_sessions()
+        self._load_persisted_sessions(build_agents=True)
         self._initialized = True
 
-    def _load_persisted_sessions(self) -> None:
-        """Restore persisted sessions into memory on first startup."""
+    def _resolve_data_dir(self) -> str:
+        """Resolve the session data directory without requiring an API key."""
+        load_project_dotenv()
+        data_dir = os.getenv("DATA_DIR", DEFAULT_DATA_DIR)
+        expanded = Path(data_dir).expanduser()
+        if expanded.is_absolute():
+            return str(expanded)
+        project_root = Path(__file__).resolve().parents[4]
+        return str((project_root / expanded).resolve())
+
+    def _ensure_repository(self, data_dir: Optional[str] = None) -> None:
+        """Lazily initialize the session repository independently of agent setup."""
+        if self._repository is None:
+            self._repository = FileSessionRepository(data_dir=data_dir or self._resolve_data_dir())
+
+    def _load_persisted_sessions(self, *, build_agents: bool) -> None:
+        """Restore persisted sessions and optionally hydrate runtime agents."""
+        self._ensure_repository()
         assert self._repository is not None
         for record in self._repository.list_sessions():
             self._records[record.id] = record
-            if record.id not in self._agents:
+            if build_agents and record.id not in self._agents:
                 self._agents[record.id] = self._build_agent_from_record(record)
+        self._records_loaded = True
 
     def _build_agent_from_record(self, record: SessionRecord) -> FinChat:
         """Create a runtime agent from a session record."""
@@ -150,25 +163,34 @@ class SessionService:
 
     def is_ready(self) -> bool:
         """Report whether required environment configuration exists."""
+        load_project_dotenv()
         return bool(os.getenv("OPENROUTER_API_KEY"))
 
     def get_or_create_agent(self, session_id: str) -> FinChat:
         """Return the current session agent, creating it when missing."""
         self._ensure_initialized()
         if session_id not in self._agents:
-            assert self._factory is not None
-            self._agents[session_id] = self._factory.create_agent()
-            self._records.setdefault(
-                session_id,
-                SessionRecord(id=session_id, title="New Chat"),
-            )
+            existing = self._records.get(session_id)
+            if existing is not None:
+                self._agents[session_id] = self._build_agent_from_record(existing)
+            else:
+                assert self._factory is not None
+                self._agents[session_id] = self._factory.create_agent()
+                self._records[session_id] = SessionRecord(id=session_id, title="New Chat")
         return self._agents[session_id]
 
     def create_session(self) -> SessionSummary:
         """Create a new empty session."""
         session_id = str(uuid.uuid4())
-        self.get_or_create_agent(session_id)
-        record = self._sync_record(session_id, timestamp=datetime.utcnow())
+        record = SessionRecord(
+            id=session_id,
+            title="New Chat",
+            timestamp=datetime.utcnow(),
+        )
+        self._records[session_id] = record
+        if self.is_ready():
+            self.get_or_create_agent(session_id)
+            record = self._sync_record(session_id, timestamp=record.timestamp)
         return self._to_summary(record)
 
     def remove_agent(self, session_id: str) -> None:
@@ -187,7 +209,9 @@ class SessionService:
 
     def get_session_detail(self, session_id: str) -> SessionDetail:
         """Return messages and document info for a session."""
-        record = self._sync_record(session_id)
+        record = self._records.get(session_id)
+        if record is None or session_id in self._agents:
+            record = self._sync_record(session_id)
         return SessionDetail(
             id=record.id,
             messages=record.messages,
@@ -197,6 +221,9 @@ class SessionService:
 
     def get_session_history(self, session_id: str) -> list[dict[str, str]]:
         """Return serialized session history."""
+        record = self._records.get(session_id)
+        if record is not None and session_id not in self._agents:
+            return record.messages
         return self._sync_record(session_id).messages
 
     def chat(self, session_id: str, message: str) -> str:
@@ -242,7 +269,8 @@ class SessionService:
 
     def list_sessions(self) -> list[SessionSummary]:
         """List all in-memory sessions."""
-        self._ensure_initialized()
+        if not self._records_loaded:
+            self._load_persisted_sessions(build_agents=self._initialized)
         for session_id in list(self._agents):
             self._sync_record(session_id)
         sessions = [self._to_summary(record) for record in self._records.values()]
@@ -251,7 +279,11 @@ class SessionService:
 
     def save_session(self, session_id: str) -> bool:
         """Persist a session to the repository."""
-        record = self._sync_record(session_id, timestamp=datetime.utcnow())
+        record = self._records.get(session_id)
+        if record is None or session_id in self._agents:
+            record = self._sync_record(session_id, timestamp=datetime.utcnow())
+        else:
+            record.timestamp = datetime.utcnow()
         record.saved_at = datetime.utcnow()
         self._records[session_id] = record
         return self.repository.save_session(record)
@@ -266,7 +298,6 @@ class SessionService:
         persist: bool = True,
     ) -> SessionRecord:
         """Replace backend session state from a client payload."""
-        self._ensure_initialized()
         existing = self._records.get(session_id)
         record = SessionRecord(
             id=session_id,
@@ -282,7 +313,10 @@ class SessionService:
             saved_at=existing.saved_at if existing else None,
         )
         self._records[session_id] = record
-        self._agents[session_id] = self._build_agent_from_record(record)
+        if self.is_ready():
+            self._agents[session_id] = self._build_agent_from_record(record)
+        else:
+            self._agents.pop(session_id, None)
         if persist:
             record.saved_at = datetime.utcnow()
             self._records[session_id] = record
@@ -295,17 +329,16 @@ class SessionService:
         if record is None:
             return False
         self._records[session_id] = record
-        self._agents[session_id] = self._build_agent_from_record(record)
+        if self._initialized:
+            self._agents[session_id] = self._build_agent_from_record(record)
         return True
 
     def list_persisted_sessions(self) -> list[SessionRecord]:
         """List persisted sessions from the repository."""
-        self._ensure_initialized()
         return self.repository.list_sessions()
 
     def delete_persisted_session(self, session_id: str) -> bool:
         """Delete a persisted session and unload it if present."""
-        self._ensure_initialized()
         self._agents.pop(session_id, None)
         self._records.pop(session_id, None)
         return self.repository.delete_session(session_id)
@@ -321,6 +354,7 @@ class SessionService:
 
     def _to_summary(self, record: SessionRecord) -> SessionSummary:
         """Map a session record to a summary DTO."""
+        self._ensure_repository()
         return SessionSummary(
             id=record.id,
             title=record.title,

@@ -16,7 +16,7 @@ from .models import ConfigurationError
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:
-    def load_dotenv() -> bool:
+    def load_dotenv(*args, **kwargs) -> bool:
         """Gracefully skip .env loading when python-dotenv is unavailable."""
         return False
 
@@ -103,9 +103,29 @@ class Settings:
         self.debug = _coerce_bool(self.debug)
 
 
+def _default_project_root() -> Path:
+    """Return the repository root for config/env discovery."""
+    return Path(__file__).resolve().parents[3]
+
+
+def _env_file_candidates(project_root: Optional[Path] = None) -> list[Path]:
+    """Return supported `.env` locations in load order."""
+    root = project_root or _default_project_root()
+    return [root / ".env", root / "backend" / ".env"]
+
+
+def load_project_dotenv(project_root: Optional[Path] = None) -> bool:
+    """Load `.env` from the project root and backend directory."""
+    loaded = False
+    for env_path in _env_file_candidates(project_root):
+        if env_path.exists():
+            loaded = load_dotenv(env_path, override=False) or loaded
+    return loaded
+
+
 def _load_env_data() -> dict[str, Any]:
     """Load settings from environment variables and .env."""
-    load_dotenv()
+    load_project_dotenv()
     return {
         "openrouter_api_key": os.getenv("OPENROUTER_API_KEY", ""),
         "openrouter_model": os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL),

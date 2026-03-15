@@ -96,3 +96,22 @@ def _parse_datetime(value: Any, allow_none: bool = False) -> Optional[datetime]:
         return datetime.fromisoformat(str(value))
     except ValueError:
         return None if allow_none else datetime.utcnow()
+
+
+@dataclass
+class DocumentComparisonResult:
+    """Result of comparing multiple documents."""
+
+    document_count: int
+    documents: List[dict[str, Any]]  # List of {filename, char_count}
+    comparison_summary: str
+    query: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "document_count": self.document_count,
+            "documents": self.documents,
+            "comparison_summary": self.comparison_summary,
+            "query": self.query,
+        }

@@ -8,6 +8,7 @@ import type {
   SearchResponse,
   HealthCheck,
 } from '@/types';
+export { extractApiErrorMessage } from './error';
 
 const getApiBaseUrl = (): string => {
   // Vite development/build uses import.meta.env

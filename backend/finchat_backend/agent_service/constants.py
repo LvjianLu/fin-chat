@@ -9,7 +9,7 @@ SUPPORTED_FILING_TYPES = ("10-K", "10-Q", "8-K")
 # File upload limits
 MAX_UPLOAD_SIZE_MB = 50
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
-SUPPORTED_UPLOAD_EXTENSIONS = {"txt", "pdf", "htm", "html"}
+SUPPORTED_UPLOAD_EXTENSIONS = {"txt", "pdf", "htm", "html", "json", "csv"}
 
 # Document processing
 DOCUMENT_TRUNCATION_LIMIT = 100_000  # characters
